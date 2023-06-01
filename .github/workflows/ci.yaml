@@ -15,12 +15,12 @@ jobs:
         uses: actions-rs/toolchain@v1
         with:
           toolchain: stable
-          override: true
       - name: Setup nightly toolchain
         uses: actions-rs/toolchain@v1
         with:
           toolchain: nightly
           override: true
+          components: rustfmt, clippy
       - name: Run lint
         run: |
           just lint
