@@ -1,0 +1,13 @@
+---
+use_angular: true
+require_scope: ~
+types:
+  - custom_type
+scopes:
+  - src
+  - actions
+  - manpages
+  - readme
+  - e2e
+  - unit
+
