@@ -44,7 +44,7 @@ struct Args {
     #[arg(short, long, env)]
     pod_namespace: String,
 
-    /// Hostname to use for leader election
+    /// Hostname to use for leader election, this will be used as the name of an instance contending for leadership, and must be unique
     #[arg(short = 'o', long, env)]
     hostname: String,
 
