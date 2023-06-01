@@ -1,4 +1,4 @@
-FROM rust:1.66.0-slim as base
+FROM rust:slim as base
 
 ENV TINI_VERSION v0.19.0
 ADD https://github.com/krallin/tini/releases/download/${TINI_VERSION}/tini-static /tini
