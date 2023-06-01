@@ -45,12 +45,15 @@ struct Args {
     pod_namespace: String,
 
     /// Hostname to use for leader election
-    #[arg(short, long, env)]
+    #[arg(short = 'o', long, env)]
     hostname: String,
 
     /// Command to run as leader
+    command: String,
+
+    /// Arguments to pass to command
     #[arg(last = true)]
-    command: Vec<String>,
+    arguments: Vec<String>,
 }
 
 #[tokio::main]
@@ -67,11 +70,10 @@ async fn main() -> miette::Result<()> {
         let is_leader = is_leader.clone();
 
         tokio::spawn(async move {
-            let client = kube::Client::try_default()
-                .await
-                .expect("Failed to create client");
             let leadership = LeaseLock::new(
-                client,
+                kube::Client::try_default()
+                    .await
+                    .expect("Failed to create client"),
                 &args.pod_namespace,
                 LeaseLockParams {
                     holder_id: args.hostname.clone(),
@@ -110,8 +112,13 @@ async fn main() -> miette::Result<()> {
             (true, None) => {
                 tracing::info!("leader");
                 tracing::info!("starting process");
-                let child = Command::new("echo")
-                    .arg("100")
+                let child = args
+                    .arguments
+                    .iter()
+                    .fold(Command::new(args.command.clone()), |mut command, arg| {
+                        command.arg(arg);
+                        command
+                    })
                     .stdout(Stdio::inherit())
                     .stderr(Stdio::inherit())
                     .spawn()
