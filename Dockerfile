@@ -45,7 +45,7 @@ ENV CARGO_NET_GIT_FETCH_WITH_CLI=true
 WORKDIR /usr/src/just-one-init
 RUN cargo init --bin .
 COPY Cargo.toml Cargo.lock ./
-RUN cargo build && cargo build --release
+RUN cargo build --release
 
 # Build
 COPY . .
