@@ -18,6 +18,9 @@ RUN apt-get update \
 
 
 WORKDIR /usr/src/just-one-init
+RUN cargo init --bin .
+COPY Cargo.toml Cargo.lock ./
+RUN cargo build
 COPY . .
 
 RUN cargo build --bin just-one-init --release
