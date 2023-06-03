@@ -86,7 +86,9 @@ jobs:
           cache-to: type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:buildcache,mode=max
 
   dependabot:
-    needs: test
+    needs:
+      - docker
+      - test
     permissions:
       pull-requests: write
       contents: write
