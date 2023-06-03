@@ -1,9 +1,8 @@
 FROM ubuntu:latest as base
 
 # Ensure base image is up to date
-ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update \
-    && apt-get upgrade --yes \
+    && DEBIAN_FRONTEND=noninteractive apt-get upgrade --yes \
     && rm --verbose --recursive --force  \
       /var/lib/apt/lists/*
 
@@ -11,15 +10,15 @@ FROM base as builder
 
 # Install rust
 ENV CARGO_HOME="/cargo"
+ENV RUSTFLAGS='-C target-feature=+crt-static'
 ENV RUSTUP_HOME="/rustup"
+ENV RUST_BACKTRACE=full
+RUN bash -c 'if [ "$(uname -m)" == "x86_64" ] ; then echo x86_64-unknown-linux-gnu > /tmp/target.txt ; else echo aarch64-unknown-linux-gnu > /tmp/target.txt ; fi'
+
 ENV PATH="$CARGO_HOME/bin:${PATH}"
-ENV DEBIAN_FRONTEND=noninteractive
-RUN bash -c 'if [ "$(uname -m)" == "x86_64" ] ; then echo x86_64-unknown-linux-musl > /tmp/target.txt ; else echo aarch64-unknown-linux-musl > /tmp/target.txt ; fi'
+
 RUN apt-get update \
-    && apt-get install --yes \
-      musl \
-      musl-dev \
-      musl-tools \
+    && DEBIAN_FRONTEND=noninteractive apt-get install --yes \
       build-essential \
       curl \
       git  \
@@ -42,9 +41,9 @@ RUN rustup target add "$( cat /tmp/target.txt )"
 # Install build dependencies
 ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update \
-    && apt-get install --yes \
-      pkg-config  \
+    && DEBIAN_FRONTEND=noninteractive apt-get install --yes \
       libssl-dev \
+      pkg-config  \
     && rm --verbose --recursive --force /var/lib/apt/lists/*
 
 # Configure Cargo & Rust
