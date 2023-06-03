@@ -87,10 +87,14 @@ async fn main() -> miette::Result<()> {
             );
 
             loop {
-                let leadership_lease = leadership
-                    .try_acquire_or_renew()
-                    .await
-                    .expect("Failed to acquire lease");
+                let mut lease_result = leadership.try_acquire_or_renew().await;
+
+                if let Err(error) = lease_result {
+                    tracing::warn!("Failed to acquire lease, retrying: {}", error);
+                    lease_result = leadership.try_acquire_or_renew().await;
+                }
+
+                let leadership_lease = lease_result.expect("Failed to acquire lease");
                 is_leader.store(leadership_lease.acquired_lease, Ordering::Relaxed);
                 tokio::time::sleep(Duration::from_secs(5)).await;
             }
@@ -105,17 +109,17 @@ async fn main() -> miette::Result<()> {
             spawned_process.borrow_mut(),
         ) {
             (false, None) => {
-                tracing::info!("not leader");
+                tracing::info!("leader: other");
                 spawned_process = None;
             }
             (false, Some(ref mut process)) => {
-                tracing::info!("not leader");
+                tracing::info!("leader: other");
                 process.kill().into_diagnostic()?;
                 spawned_process = None;
             }
             (true, None) => {
-                tracing::info!("leader");
-                tracing::info!("starting process");
+                tracing::info!("leader: true");
+                tracing::trace!("starting process");
                 let child = args
                     .arguments
                     .iter()
@@ -131,15 +135,14 @@ async fn main() -> miette::Result<()> {
                 spawned_process = Some(child);
             }
             (true, Some(ref mut process)) => {
-                tracing::info!("leader");
-
+                tracing::info!("leader: true");
                 match process.try_wait().into_diagnostic()? {
                     None => {
-                        tracing::info!("process still running");
+                        tracing::trace!("process still running");
                     }
                     Some(_) => {
-                        tracing::info!("process exited");
-                        tracing::info!("goodbye");
+                        tracing::trace!("process exited");
+                        tracing::trace!("goodbye");
                         return Ok(());
                     }
                 }

@@ -36,12 +36,12 @@ jobs:
           toolchain: nightly
           override: true
           components: rustfmt, clippy
-      - name: Run lint
+      - name: Run lints
         run: just lint
       - name: Start k8s cluster
         run: kind create cluster --name kind
-      - name: Try it out
-        run: ./test.sh
+      - name: Run e2e test
+        run: just test
   docker:
     needs: test
     runs-on: ubuntu-latest
