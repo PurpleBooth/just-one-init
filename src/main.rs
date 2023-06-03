@@ -42,6 +42,10 @@ use miette::IntoDiagnostic;
 struct Args {
     /// Namespace to use for leader election
     #[arg(short, long, env)]
+    lease_name: String,
+
+    /// Namespace to use for leader election
+    #[arg(short, long, env)]
     pod_namespace: String,
 
     /// Hostname to use for leader election, this will be used as the name of an instance contending for leadership, and must be unique
@@ -77,7 +81,7 @@ async fn main() -> miette::Result<()> {
                 &args.pod_namespace,
                 LeaseLockParams {
                     holder_id: args.hostname.clone(),
-                    lease_name: "shared-lease-example".into(),
+                    lease_name: args.lease_name.clone(),
                     lease_ttl,
                 },
             );
