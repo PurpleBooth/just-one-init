@@ -36,8 +36,8 @@ RUN apt-get update \
       -y \
       --default-toolchain stable \
       --profile complete \
-      --no-modify-path \
-      --target "$( cat /tmp/target.txt )"
+      --no-modify-path
+RUN rustup target add "$( cat /tmp/target.txt )"
 
 # Install build dependencies
 ENV DEBIAN_FRONTEND=noninteractive
