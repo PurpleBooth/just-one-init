@@ -1,4 +1,6 @@
-set -xeuo pipefail
+#!/usr/bin/env bash
+
+set -euo pipefail
 
 LEASE_NAME="$USER-$(date +%s)"
 TEMP_DIR="$(mktemp -d)"
