@@ -341,6 +341,7 @@ async fn get_lease(tx: Sender<AbcState>, leadership: &LeaseLock) -> MietteResult
             tx.send(AbcState::Follower).await.into_diagnostic()?;
         }
         Err(err) => {
+            tx.send(AbcState::Follower).await.into_diagnostic()?;
             tracing::warn!("Failed to acquire lease, continuing: {}", err);
         }
     };
