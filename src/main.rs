@@ -343,6 +343,7 @@ fn start_status_server(
         .with_state(current_state);
 
     tokio::spawn(async move {
+        tracing::info!("Starting status server on {}", server_listen_addr);
         Server::bind(&server_listen_addr)
             .serve(app.into_make_service())
             .await
