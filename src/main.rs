@@ -223,9 +223,8 @@ async fn main() -> MietteResult<()> {
 
                 let running = leader(&args, &mut spawned_process)?;
 
-                if running {
+                if !running {
                     mptx.send(AbcState::Shutdown).await.expect("Failed to send");
-                    break;
                 }
             }
             None => {
@@ -291,7 +290,8 @@ async fn shutdown(
     spawned_process: &mut Option<Child>,
 ) -> MietteResult<()> {
     if let Some(ref mut child) = spawned_process {
-        child.kill().into_diagnostic()?;
+        let _ = child.kill();
+        let _ = child.wait();
     }
 
     if *current_state.read().expect("Failed to get read lock") == AbcState::Leader {

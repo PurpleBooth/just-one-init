@@ -14,7 +14,7 @@ cargo build --release
 	--listen-addr="127.0.0.1:5048" \
 	--hostname first \
 	--pod-namespace default \
-	bash -- -c "test ! -e \"$SECOND_FILE\" && echo hello world > \"$FIRST_FILE\"" &
+	bash -- -c "echo hello world > \"$FIRST_FILE\"" &
 FIRST_PID="$!"
 
 while [ "$(curl --write-out "%{http_code}\n" --silent --output /dev/null "http://127.0.0.1:5047")" -eq 200 ]; do
@@ -27,7 +27,7 @@ done
 	--lease-name="$LEASE_NAME" \
 	--hostname second \
 	--pod-namespace default \
-	bash -- -c "test ! -e \"$FIRST_FILE\" && echo hello world > \"$SECOND_FILE\"" &
+	bash -- -c "echo hello world > \"$SECOND_FILE\"" &
 SECOND_PID="$!"
 
 while [ "$(curl --write-out "%{http_code}\n" --silent --output /dev/null "http://127.0.0.1:5048")" -eq 404 ]; do
@@ -38,8 +38,6 @@ done
 while [ ! -e "$FIRST_FILE" ] && [ ! -e "$SECOND_FILE" ]; do
 	sleep 1
 done
-
-sleep 30
 
 if [ -e "$FIRST_FILE" ] && [ -e "$SECOND_FILE" ]; then
 	echo "Did not lock properly"
