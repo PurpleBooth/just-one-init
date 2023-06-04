@@ -12,7 +12,7 @@ categories = ["system", "parallelism", "concurrency"]
 [dependencies]
 kube-leader-election = { version = "0.22.0" }
 tracing = "0.1"
-tracing-subscriber = "0.3"
+tracing-subscriber = { version = "0.3" , features = ["env-filter", "json"] }
 miette = { version = "5.8.0", features = ["fancy"] }
 tokio = { version = "1.28.2", features = ["full", "tracing"] }
 kube = { version = "0.82.2", default-features = false, features = ["client", "rustls-tls"] }

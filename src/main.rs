@@ -47,7 +47,10 @@ use axum::{
     Router,
     Server,
 };
-use clap::Parser;
+use clap::{
+    Parser,
+    ValueEnum,
+};
 use kube_leader_election::{
     LeaseLock,
     LeaseLockParams,
@@ -65,7 +68,14 @@ use tokio::{
     task::JoinHandle,
 };
 use tracing::info_span;
-use tracing_subscriber::fmt;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+enum LogFormat {
+    Json,
+    Default,
+    Pretty,
+    Compact,
+}
 
 /// Simple program to greet a person
 #[derive(Parser, Debug)]
@@ -97,6 +107,9 @@ struct Args {
     /// Arguments to pass to command
     #[arg(last = true)]
     arguments: Vec<String>,
+
+    #[arg(short = 'f', long, env, default_value = "default")]
+    log_format: LogFormat,
 }
 
 #[derive(Debug, Eq, PartialEq, Clone, Copy)]
@@ -110,8 +123,8 @@ enum AbcState {
 
 #[tokio::main]
 async fn main() -> MietteResult<()> {
-    o11y();
     let args = Args::parse();
+    o11y(args.log_format);
 
     let lease_ttl = Duration::from_secs(args.lease_ttl);
     let renew_ttl = lease_ttl / 3;
@@ -226,9 +239,27 @@ async fn main() -> MietteResult<()> {
     Ok(())
 }
 
-fn o11y() {
-    let format = fmt::format().pretty();
-    tracing_subscriber::fmt().event_format(format).init();
+fn o11y(format: LogFormat) {
+    match format {
+        LogFormat::Json => {
+            tracing_subscriber::fmt()
+                .event_format(tracing_subscriber::fmt::format().json())
+                .init();
+        }
+        LogFormat::Pretty => {
+            tracing_subscriber::fmt()
+                .event_format(tracing_subscriber::fmt::format().pretty())
+                .init();
+        }
+        LogFormat::Compact => {
+            tracing_subscriber::fmt()
+                .event_format(tracing_subscriber::fmt::format().compact())
+                .init();
+        }
+        LogFormat::Default => {
+            tracing_subscriber::fmt().init();
+        }
+    }
     miette::set_panic_hook();
 }
 
