@@ -276,6 +276,7 @@ fn leader(args: &Args, spawned_process: &mut Option<Child>) -> MietteResult<bool
                 if status.success() {
                     Ok(false)
                 } else {
+                    tracing::error!("Subprocess exited with error: {}", status);
                     Err(miette!("Subprocess exited with error: {}", status))
                 }
             },
