@@ -24,19 +24,16 @@
 )]
 
 use std::{
-    borrow::BorrowMut,
     net::SocketAddr,
     option::Option,
     process::{
+        Child,
         Command,
         Stdio,
     },
     sync::{
-        atomic::{
-            AtomicBool,
-            Ordering,
-        },
         Arc,
+        RwLock,
     },
     time::Duration,
 };
@@ -54,9 +51,20 @@ use clap::Parser;
 use kube_leader_election::{
     LeaseLock,
     LeaseLockParams,
+    LeaseLockResult,
 };
-use miette::IntoDiagnostic;
+use miette::{
+    miette,
+    IntoDiagnostic,
+    Result as MietteResult,
+};
 use serde_json::json;
+use tokio::{
+    sync,
+    sync::mpsc::Sender,
+    task::JoinHandle,
+};
+use tracing::info_span;
 
 /// Simple program to greet a person
 #[derive(Parser, Debug)]
@@ -90,149 +98,254 @@ struct Args {
     arguments: Vec<String>,
 }
 
+#[derive(Debug, Eq, PartialEq, Clone, Copy)]
+enum AbcState {
+    Init,
+    Leader,
+    Shutdown,
+    RenewAttempt,
+    Follower,
+}
+
 #[tokio::main]
-async fn main() -> miette::Result<()> {
-    tracing_subscriber::fmt::init();
-    miette::set_panic_hook();
+async fn main() -> MietteResult<()> {
+    o11y();
     let args = Args::parse();
 
     let lease_ttl = Duration::from_secs(args.lease_ttl);
     let renew_ttl = lease_ttl / 3;
 
     let server_listen_addr = args.listen_addr.parse::<SocketAddr>().into_diagnostic()?;
+    let current_state = Arc::new(RwLock::from(AbcState::Init));
+    let (mptx, mut mprx) = sync::mpsc::channel(10);
+    let mut join_handles = Vec::new();
 
-    let is_leader = Arc::new(AtomicBool::new(false));
-    elect_leader(
-        args.pod_namespace,
-        args.hostname,
-        args.lease_name,
-        lease_ttl,
-        is_leader.clone(),
+    let leadership = LeaseLock::new(
+        kube::Client::try_default().await.into_diagnostic()?,
+        &args.pod_namespace,
+        LeaseLockParams {
+            holder_id: args.hostname.clone(),
+            lease_name: args.lease_name.clone(),
+            lease_ttl,
+        },
     );
-    start_status_server(server_listen_addr, is_leader.clone());
-    process_starter(args.command, args.arguments, renew_ttl, is_leader.clone()).await?;
+
+    let heartbeat_channel = mptx.clone();
+    let renew_heartbeat_handle = tokio::spawn(async move {
+        loop {
+            tokio::time::sleep(renew_ttl).await;
+            heartbeat_channel
+                .send(AbcState::RenewAttempt)
+                .await
+                .expect("Failed to send heartbeat");
+        }
+    });
+    join_handles.push(renew_heartbeat_handle);
+
+    let shutdown_channel = mptx.clone();
+    tokio::spawn(async move {
+        tokio::signal::ctrl_c()
+            .await
+            .expect("Failed to listen for ctrl-c");
+        shutdown_channel
+            .send(AbcState::Shutdown)
+            .await
+            .expect("Failed to send");
+    });
+
+    join_handles.push(start_status_server(
+        server_listen_addr,
+        current_state.clone(),
+    ));
+
+    let mut spawned_process: Option<Child> = None;
+
+    let mptx = mptx.clone();
+    loop {
+        let mprx_value = mprx.recv().await;
+
+        if let Some(abc_state) = mprx_value {
+            if abc_state == AbcState::Leader || abc_state == AbcState::Follower {
+                let mut w = current_state.write().expect("Failed to get write lock");
+                *w = abc_state;
+            }
+        };
+
+        match mprx_value {
+            Some(AbcState::Init) => {
+                let span = info_span!("tick.init", hostname = %args.hostname);
+                let _span_guard = span.enter();
+                get_lease(mptx.clone(), &leadership).await?;
+            }
+            Some(AbcState::RenewAttempt) => {
+                let span = info_span!("tick.renew_attempt", hostname = %args.hostname);
+                let _span_guard = span.enter();
+                get_lease(mptx.clone(), &leadership).await?;
+            }
+            Some(AbcState::Follower) => {
+                let span = info_span!("tick.follower", hostname = %args.hostname);
+                let _span_guard = span.enter();
+                if let Some(ref mut child) = spawned_process {
+                    child.kill().into_diagnostic()?;
+                    spawned_process = None;
+                }
+            }
+            Some(AbcState::Shutdown) => {
+                let span = info_span!("tick.shutdown", hostname = %args.hostname);
+                let _span_guard = span.enter();
+                shutdown(
+                    current_state,
+                    &mut join_handles,
+                    leadership,
+                    &mut spawned_process,
+                )
+                .await?;
+
+                break;
+            }
+            Some(AbcState::Leader) => {
+                let span = info_span!("tick.leader", hostname = %args.hostname);
+                let _span_guard = span.enter();
+
+                let running = leader(&args, &mut spawned_process)?;
+
+                if running {
+                    mptx.send(AbcState::Shutdown).await.expect("Failed to send");
+                    break;
+                }
+            }
+            None => {
+                let span = info_span!("tick.nop", hostname = %args.hostname);
+                let _span_guard = span.enter();
+                tokio::time::sleep(renew_ttl).await;
+            }
+        }
+    }
 
     Ok(())
 }
 
-fn elect_leader(
-    pod_namespace: String,
-    hostname: String,
-    lease_name: String,
-    lease_ttl: Duration,
-    is_leader: Arc<AtomicBool>,
-) {
-    {
-        let is_leader = is_leader;
+fn o11y() {
+    tracing_subscriber::fmt::init();
+    miette::set_panic_hook();
+}
 
-        tokio::spawn(async move {
-            let leadership = LeaseLock::new(
-                kube::Client::try_default()
-                    .await
-                    .expect("Failed to create client"),
-                &pod_namespace,
-                LeaseLockParams {
-                    holder_id: hostname.clone(),
-                    lease_name: lease_name.clone(),
-                    lease_ttl,
-                },
-            );
-
-            loop {
-                let mut lease_result = leadership.try_acquire_or_renew().await;
-
-                if let Err(error) = lease_result {
-                    tracing::warn!("Failed to acquire lease, retrying: {}", error);
-                    lease_result = leadership.try_acquire_or_renew().await;
+fn leader(args: &Args, spawned_process: &mut Option<Child>) -> MietteResult<bool> {
+    match spawned_process {
+        None => {
+            let child = spawn_process(args.command.clone(), &args.arguments)?;
+            spawned_process.replace(child);
+            Ok(true)
+        }
+        Some(ref mut child) => child.wait().map_or_else(
+            |_| Ok(true),
+            |status| {
+                if status.success() {
+                    Ok(false)
+                } else {
+                    Err(miette!("Subprocess exited with error: {}", status))
                 }
-
-                let leadership_lease = lease_result.expect("Failed to acquire lease");
-                is_leader.store(leadership_lease.acquired_lease, Ordering::Relaxed);
-                tokio::time::sleep(Duration::from_secs(5)).await;
-            }
-        });
+            },
+        ),
     }
 }
 
-fn start_status_server(server_listen_addr: SocketAddr, is_leader: Arc<AtomicBool>) {
+async fn shutdown(
+    current_state: Arc<RwLock<AbcState>>,
+    join_handles: &mut Vec<JoinHandle<()>>,
+    leadership: LeaseLock,
+    spawned_process: &mut Option<Child>,
+) -> MietteResult<()> {
+    if let Some(ref mut child) = spawned_process {
+        child.kill().into_diagnostic()?;
+    }
+
+    if *current_state.read().expect("Failed to get read lock") == AbcState::Leader {
+        leadership.step_down().await.into_diagnostic()?;
+    }
+
+    for join_handle in join_handles {
+        join_handle.abort();
+    }
+    Ok(())
+}
+
+fn spawn_process(command: String, arguments: &[String]) -> MietteResult<Child> {
+    arguments
+        .iter()
+        .fold(Command::new(command), |mut command, arg| {
+            command.arg(arg);
+            command
+        })
+        .stdout(Stdio::inherit())
+        .stderr(Stdio::inherit())
+        .spawn()
+        .into_diagnostic()
+}
+
+async fn get_lease(tx: Sender<AbcState>, leadership: &LeaseLock) -> MietteResult<()> {
+    let lease_lock_result = leadership.try_acquire_or_renew().await;
+    match lease_lock_result {
+        Ok(LeaseLockResult {
+            acquired_lease: true,
+            lease: Some(lease),
+        }) => {
+            tracing::trace!("Acquired lease {:?}", lease);
+            tx.send(AbcState::Leader).await.into_diagnostic()?;
+        }
+        Ok(
+            LeaseLockResult {
+                acquired_lease: _,
+                lease: None,
+            }
+            | LeaseLockResult {
+                acquired_lease: false,
+                lease: _,
+            },
+        ) => {
+            tx.send(AbcState::Follower).await.into_diagnostic()?;
+        }
+        Err(err) => {
+            tracing::warn!("Failed to acquire lease, continuing: {}", err);
+        }
+    };
+    Ok(())
+}
+
+fn start_status_server(
+    server_listen_addr: SocketAddr,
+    current_state: Arc<RwLock<AbcState>>,
+) -> JoinHandle<()> {
     let app = Router::new()
-        .layer(Extension(is_leader.clone()))
+        .layer(Extension(current_state.clone()))
         .route(
             "/",
-            get(move |State(is_leader): State<Arc<AtomicBool>>| async move {
-                if is_leader.load(Ordering::Relaxed) {
-                    (
-                        StatusCode::OK,
-                        Json(json!({"status": "ok", "leader": true})),
-                    )
-                } else {
-                    (
-                        StatusCode::NOT_FOUND,
-                        Json(json!({"status": "ok", "leader": false})),
-                    )
-                }
-            }),
+            get(
+                move |State(is_leader): State<Arc<RwLock<AbcState>>>| async move {
+                    let state = *(is_leader.read().expect("Failed to read state"));
+                    match state {
+                        AbcState::Follower => (
+                            StatusCode::NOT_FOUND,
+                            Json(json!({"status": "ok", "state": "follower"})),
+                        ),
+                        AbcState::Leader => (
+                            StatusCode::OK,
+                            Json(json!({"status": "ok", "state": "leader"})),
+                        ),
+                        _ => (
+                            StatusCode::INTERNAL_SERVER_ERROR,
+                            Json(json!({"status": "error", "state": "unknown"})),
+                        ),
+                    }
+                },
+            ),
         )
-        .with_state(is_leader);
+        .with_state(current_state);
 
     tokio::spawn(async move {
         Server::bind(&server_listen_addr)
             .serve(app.into_make_service())
             .await
             .expect("Failed to start server");
-    });
-}
-
-async fn process_starter(
-    command: String,
-    arguments: Vec<String>,
-    renew_ttl: Duration,
-    is_leader: Arc<AtomicBool>,
-) -> miette::Result<()> {
-    let mut spawned_process: Option<std::process::Child> = None;
-
-    loop {
-        match (
-            is_leader.load(Ordering::Relaxed),
-            spawned_process.borrow_mut(),
-        ) {
-            (false, None) => {
-                tracing::trace!("leader: false, process: unspawned");
-                spawned_process = None;
-            }
-            (false, Some(ref mut process)) => {
-                tracing::trace!("leader: false, process: killing");
-                process.kill().into_diagnostic()?;
-                spawned_process = None;
-            }
-            (true, None) => {
-                tracing::trace!("leader: true, process: unspawned");
-                let child = arguments
-                    .iter()
-                    .fold(Command::new(command.clone()), |mut command, arg| {
-                        command.arg(arg);
-                        command
-                    })
-                    .stdout(Stdio::inherit())
-                    .stderr(Stdio::inherit())
-                    .spawn()
-                    .into_diagnostic()?;
-
-                spawned_process = Some(child);
-            }
-            (true, Some(ref mut process)) => {
-                tracing::info!("leader: true");
-                match process.try_wait().into_diagnostic()? {
-                    None => {
-                        tracing::trace!("leader: true, process: spawned");
-                    }
-                    Some(_) => {
-                        tracing::trace!("leader: true, process: exited");
-                        return Ok(());
-                    }
-                }
-            }
-        }
-        tokio::time::sleep(renew_ttl).await;
-    }
+    })
 }

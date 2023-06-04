@@ -15,8 +15,13 @@ cargo build --release
 	--hostname first \
 	--pod-namespace default \
 	bash -- -c "test ! -e \"$SECOND_FILE\" && echo hello world > \"$FIRST_FILE\"" &
-
 FIRST_PID="$!"
+
+while [ "$(curl --write-out "%{http_code}\n" --silent --output /dev/null "http://127.0.0.1:5047")" -eq 200 ]; do
+	echo "waiting for first to lock"
+	sleep 1
+done
+
 ./target/release/just-one-init \
 	--listen-addr="127.0.0.1:5047" \
 	--lease-name="$LEASE_NAME" \
@@ -25,19 +30,16 @@ FIRST_PID="$!"
 	bash -- -c "test ! -e \"$FIRST_FILE\" && echo hello world > \"$SECOND_FILE\"" &
 SECOND_PID="$!"
 
+while [ "$(curl --write-out "%{http_code}\n" --silent --output /dev/null "http://127.0.0.1:5048")" -eq 404 ]; do
+	echo "waiting for second to follow"
+	sleep 1
+done
+
 while [ ! -e "$FIRST_FILE" ] && [ ! -e "$SECOND_FILE" ]; do
 	sleep 1
 done
 
-sleep 1
-
-if ! curl --fail --request GET -sL \
-	--url 'http://localhost:5047' && ! curl --fail --request GET -sL \
-	--url 'http://localhost:5048'; then
-	echo "Server did not start"
-	kill "$FIRST_PID" "$SECOND_PID" || true
-	exit 1
-fi
+sleep 30
 
 if [ -e "$FIRST_FILE" ] && [ -e "$SECOND_FILE" ]; then
 	echo "Did not lock properly"
