@@ -64,7 +64,8 @@ RUN cargo install \
 
 # Build
 COPY . .
-RUN cargo install \
+RUN rm -v /usr/local/bin/just-one-init  \
+    && cargo install \
     --target="$( cat /tmp/target.txt )" \
     --path . \
     --bin just-one-init \
