@@ -57,7 +57,6 @@ use kube_leader_election::{
     LeaseLockResult,
 };
 use miette::{
-    miette,
     IntoDiagnostic,
     Result as MietteResult,
 };
@@ -269,17 +268,13 @@ fn leader(args: &Args, spawned_process: &mut Option<Child>) -> MietteResult<bool
             *spawned_process = Some(child);
             Ok(true)
         }
-        Some(ref mut child) => child.wait().map_or_else(
-            |_| Ok(true),
-            |status| {
-                if status.success() {
-                    Ok(false)
-                } else {
-                    tracing::error!("Subprocess exited with error: {}", status);
-                    Err(miette!("Subprocess exited with error: {}", status))
-                }
-            },
-        ),
+        Some(ref mut child) => {
+            if child.try_wait().ok().flatten().is_some() {
+                return Ok(false);
+            }
+
+            Ok(true)
+        }
     }
 }
 
