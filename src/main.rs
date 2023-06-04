@@ -65,6 +65,7 @@ use tokio::{
     task::JoinHandle,
 };
 use tracing::info_span;
+use tracing_subscriber::fmt;
 
 /// Simple program to greet a person
 #[derive(Parser, Debug)]
@@ -226,7 +227,8 @@ async fn main() -> MietteResult<()> {
 }
 
 fn o11y() {
-    tracing_subscriber::fmt::init();
+    let format = fmt::format().pretty();
+    tracing_subscriber::fmt().event_format(format).init();
     miette::set_panic_hook();
 }
 
@@ -271,6 +273,7 @@ async fn shutdown(
 }
 
 fn spawn_process(command: String, arguments: &[String]) -> MietteResult<Child> {
+    tracing::info!("Spawning process: {} {:?}", command, arguments);
     arguments
         .iter()
         .fold(Command::new(command), |mut command, arg| {
@@ -343,7 +346,6 @@ fn start_status_server(
         .with_state(current_state);
 
     tokio::spawn(async move {
-        tracing::info!("Starting status server on {}", server_listen_addr);
         Server::bind(&server_listen_addr)
             .serve(app.into_make_service())
             .await
