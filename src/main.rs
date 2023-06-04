@@ -62,7 +62,7 @@ use serde_json::json;
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
 struct Args {
-    /// Namespace to use for leader election
+    /// A unique name for the lease that this instance compete for
     #[arg(short, long, env)]
     lease_name: String,
 
