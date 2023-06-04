@@ -266,7 +266,7 @@ fn leader(args: &Args, spawned_process: &mut Option<Child>) -> MietteResult<bool
     match spawned_process {
         None => {
             let child = spawn_process(args.command.clone(), &args.arguments)?;
-            spawned_process.replace(child);
+            *spawned_process = Some(child);
             Ok(true)
         }
         Some(ref mut child) => child.wait().map_or_else(
