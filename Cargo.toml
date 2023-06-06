@@ -21,3 +21,4 @@ rand = "0.8.4"
 clap = { version = "4.3.0", features = ["derive", "cargo", "env"] }
 axum = { version = "0.6.18", features = ["tracing", "http2", ] }
 serde_json = "1.0.96"
+shellwords = "1.1.0"

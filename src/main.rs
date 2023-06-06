@@ -23,14 +23,11 @@
     clippy::panic_in_result_fn
 )]
 
+mod process_launcher;
+
 use std::{
     net::SocketAddr,
     option::Option,
-    process::{
-        Child,
-        Command,
-        Stdio,
-    },
     sync::{
         Arc,
         RwLock,
@@ -57,6 +54,7 @@ use kube_leader_election::{
     LeaseLockResult,
 };
 use miette::{
+    miette,
     IntoDiagnostic,
     Result as MietteResult,
 };
@@ -67,6 +65,8 @@ use tokio::{
     task::JoinHandle,
 };
 use tracing::info_span;
+
+use crate::process_launcher::ProcessManager;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 enum LogFormat {
@@ -100,12 +100,9 @@ struct Args {
     #[arg(short = 't', long, env, default_value = "15")]
     lease_ttl: u64,
 
-    /// Command to run as leader
-    command: String,
-
-    /// Arguments to pass to command
+    /// Command to run
     #[arg(last = true)]
-    arguments: Vec<String>,
+    command: Vec<String>,
 
     #[arg(short = 'f', long, env, default_value = "default")]
     log_format: LogFormat,
@@ -171,7 +168,7 @@ async fn main() -> MietteResult<()> {
         current_state.clone(),
     ));
 
-    let mut spawned_process: Option<Child> = None;
+    let mut spawned_process = ProcessManager::from(args.command);
 
     let mptx = mptx.clone();
     loop {
@@ -198,21 +195,17 @@ async fn main() -> MietteResult<()> {
             Some(AbcState::Follower) => {
                 let span = info_span!("tick.follower", hostname = %args.hostname);
                 let _span_guard = span.enter();
-                if let Some(ref mut child) = spawned_process {
-                    child.kill().into_diagnostic()?;
-                    spawned_process = None;
-                }
+                spawned_process.stop()?;
             }
             Some(AbcState::Shutdown) => {
                 let span = info_span!("tick.shutdown", hostname = %args.hostname);
                 let _span_guard = span.enter();
-                shutdown(
-                    current_state,
-                    &mut join_handles,
-                    leadership,
-                    &mut spawned_process,
-                )
-                .await?;
+                spawned_process.stop()?;
+                shutdown(current_state, &mut join_handles, leadership).await?;
+
+                if spawned_process.check_if_exit_successful() == Some(false) {
+                    return Err(miette!("Process exited with non-zero exit code"));
+                }
 
                 break;
             }
@@ -220,9 +213,9 @@ async fn main() -> MietteResult<()> {
                 let span = info_span!("tick.leader", hostname = %args.hostname);
                 let _span_guard = span.enter();
 
-                let running = leader(&args, &mut spawned_process)?;
+                spawned_process.start()?;
 
-                if !running {
+                if !spawned_process.check_if_running() {
                     mptx.send(AbcState::Shutdown).await.expect("Failed to send");
                 }
             }
@@ -261,34 +254,11 @@ fn o11y(format: LogFormat) {
     miette::set_panic_hook();
 }
 
-fn leader(args: &Args, spawned_process: &mut Option<Child>) -> MietteResult<bool> {
-    match spawned_process {
-        None => {
-            let child = spawn_process(args.command.clone(), &args.arguments)?;
-            *spawned_process = Some(child);
-            Ok(true)
-        }
-        Some(ref mut child) => {
-            if child.try_wait().ok().flatten().is_some() {
-                return Ok(false);
-            }
-
-            Ok(true)
-        }
-    }
-}
-
 async fn shutdown(
     current_state: Arc<RwLock<AbcState>>,
     join_handles: &mut Vec<JoinHandle<()>>,
     leadership: LeaseLock,
-    spawned_process: &mut Option<Child>,
 ) -> MietteResult<()> {
-    if let Some(ref mut child) = spawned_process {
-        let _ = child.kill();
-        let _ = child.wait();
-    }
-
     if *current_state.read().expect("Failed to get read lock") == AbcState::Leader {
         leadership.step_down().await.into_diagnostic()?;
     }
@@ -297,20 +267,6 @@ async fn shutdown(
         join_handle.abort();
     }
     Ok(())
-}
-
-fn spawn_process(command: String, arguments: &[String]) -> MietteResult<Child> {
-    tracing::info!("Spawning process: {} {:?}", command, arguments);
-    arguments
-        .iter()
-        .fold(Command::new(command), |mut command, arg| {
-            command.arg(arg);
-            command
-        })
-        .stdout(Stdio::inherit())
-        .stderr(Stdio::inherit())
-        .spawn()
-        .into_diagnostic()
 }
 
 async fn get_lease(tx: Sender<AbcState>, leadership: &LeaseLock) -> MietteResult<()> {

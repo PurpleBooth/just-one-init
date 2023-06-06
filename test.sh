@@ -13,8 +13,8 @@ cargo build --release
 	--lease-name="$LEASE_NAME" \
 	--listen-addr="127.0.0.1:5048" \
 	--hostname first \
-	--pod-namespace default \
-	bash -- -c "echo hello world > \"$FIRST_FILE\"" &
+	--pod-namespace default -- \
+	bash -c "echo hello world > \"$FIRST_FILE\"" &
 FIRST_PID="$!"
 
 while [ "$(curl --write-out "%{http_code}\n" --silent --output /dev/null "http://127.0.0.1:5047")" -eq 200 ]; do
@@ -26,8 +26,8 @@ done
 	--listen-addr="127.0.0.1:5047" \
 	--lease-name="$LEASE_NAME" \
 	--hostname second \
-	--pod-namespace default \
-	bash -- -c "echo hello world > \"$SECOND_FILE\"" &
+	--pod-namespace default -- \
+	bash -c "echo hello world > \"$SECOND_FILE\"" &
 SECOND_PID="$!"
 
 while [ "$(curl --write-out "%{http_code}\n" --silent --output /dev/null "http://127.0.0.1:5048")" -eq 404 ]; do
