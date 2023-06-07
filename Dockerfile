@@ -56,15 +56,17 @@ ENV CARGO_NET_GIT_FETCH_WITH_CLI=true
 WORKDIR /usr/src/just-one-init
 RUN cargo init --bin .
 COPY Cargo.toml Cargo.lock ./
-RUN cargo install \
+RUN cargo clean  \
+    && cargo build \
+    --release \
     --target="$( cat /tmp/target.txt )" \
-    --path . \
-    --bin just-one-init \
-    --root=/usr/local \
-    && rm -v /usr/local/bin/just-one-init
+    && find . -not -path "*/target*" -type f -delete
 # Build
 COPY . .
-RUN cargo install \
+RUN cargo build \
+    --release \
+    --target="$( cat /tmp/target.txt )"  \
+    && cargo install \
     --target="$( cat /tmp/target.txt )" \
     --path . \
     --bin just-one-init \
