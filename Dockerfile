@@ -60,12 +60,11 @@ RUN cargo install \
     --target="$( cat /tmp/target.txt )" \
     --path . \
     --bin just-one-init \
-    --root=/usr/local
-
+    --root=/usr/local \
+    && rm -v /usr/local/bin/just-one-init
 # Build
 COPY . .
-RUN rm -v /usr/local/bin/just-one-init  \
-    && cargo install \
+RUN cargo install \
     --target="$( cat /tmp/target.txt )" \
     --path . \
     --bin just-one-init \
