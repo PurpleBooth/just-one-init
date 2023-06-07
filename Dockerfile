@@ -86,4 +86,4 @@ RUN useradd \
     --gid 568 \
     nonroot
 USER nonroot
-RUN just-one-init --help
+RUN just-one-init --help | grep --invert-match --fixed-strings --quiet 'Hello, world!'
