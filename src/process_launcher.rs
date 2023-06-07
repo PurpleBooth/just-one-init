@@ -12,6 +12,7 @@ use miette::{
     IntoDiagnostic,
     Result,
 };
+use tracing::instrument;
 
 #[derive(Debug)]
 pub struct ProcessManager {
@@ -28,6 +29,9 @@ impl From<Vec<String>> for ProcessManager {
 }
 
 impl ProcessManager {
+    // Panic in Result function for compatibility with non result functions
+    #[allow(clippy::panic_in_result_fn)]
+    #[instrument]
     pub fn check_if_exit_successful(&mut self) -> Option<bool> {
         match self.process {
             None => None,
@@ -43,6 +47,9 @@ impl ProcessManager {
         }
     }
 
+    // Panic in Result function for compatibility with non result functions
+    #[allow(clippy::panic_in_result_fn)]
+    #[instrument]
     pub(crate) fn stop(&mut self) -> Result<()> {
         match self.process {
             Some(Err(_)) | None => Ok(()),
@@ -55,6 +62,9 @@ impl ProcessManager {
         }
     }
 
+    // Panic in Result function for compatibility with non result functions
+    #[allow(clippy::panic_in_result_fn)]
+    #[instrument]
     pub(crate) fn start(&mut self) -> Result<()> {
         if self.process.is_some() {
             return Ok(());
@@ -72,6 +82,9 @@ impl ProcessManager {
         Ok(())
     }
 
+    // Panic in Result function for compatiblity with non result functions
+    #[allow(clippy::panic_in_result_fn)]
+    #[instrument]
     pub fn check_if_running(&mut self) -> bool {
         match self.process {
             Some(Err(_)) | None => false,
@@ -79,6 +92,7 @@ impl ProcessManager {
         }
     }
 
+    #[instrument]
     pub fn new(command: &str) -> Self {
         Self {
             command: command.to_string(),
