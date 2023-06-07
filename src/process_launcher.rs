@@ -12,7 +12,10 @@ use miette::{
     IntoDiagnostic,
     Result,
 };
-use tracing::instrument;
+use tracing::{
+    event,
+    instrument,
+};
 
 #[derive(Debug)]
 pub struct ProcessManager {
@@ -31,7 +34,7 @@ impl From<Vec<String>> for ProcessManager {
 impl ProcessManager {
     // Panic in Result function for compatibility with non result functions
     #[allow(clippy::panic_in_result_fn)]
-    #[instrument]
+    #[instrument(fields(command = %self.command))]
     pub fn check_if_exit_successful(&mut self) -> Option<bool> {
         match self.process {
             None => None,
@@ -49,11 +52,15 @@ impl ProcessManager {
 
     // Panic in Result function for compatibility with non result functions
     #[allow(clippy::panic_in_result_fn)]
-    #[instrument]
+    #[instrument(fields(command = %self.command))]
     pub(crate) fn stop(&mut self) -> Result<()> {
         match self.process {
-            Some(Err(_)) | None => Ok(()),
+            Some(Err(_)) | None => {
+                event!(tracing::Level::TRACE, "No process running");
+                Ok(())
+            }
             Some(Ok(ref mut child)) => {
+                event!(tracing::Level::INFO, "Stopping process");
                 child.kill().into_diagnostic()?;
                 self.process = Some(Err(child.wait().into_diagnostic()?));
 
@@ -64,7 +71,7 @@ impl ProcessManager {
 
     // Panic in Result function for compatibility with non result functions
     #[allow(clippy::panic_in_result_fn)]
-    #[instrument]
+    #[instrument(fields(command = %self.command))]
     pub(crate) fn start(&mut self) -> Result<()> {
         if self.process.is_some() {
             return Ok(());
@@ -84,7 +91,7 @@ impl ProcessManager {
 
     // Panic in Result function for compatiblity with non result functions
     #[allow(clippy::panic_in_result_fn)]
-    #[instrument]
+    #[instrument(fields(command = %self.command))]
     pub fn check_if_running(&mut self) -> bool {
         match self.process {
             Some(Err(_)) | None => false,
@@ -92,7 +99,6 @@ impl ProcessManager {
         }
     }
 
-    #[instrument]
     pub fn new(command: &str) -> Self {
         Self {
             command: command.to_string(),

@@ -44,10 +44,7 @@ use axum::{
     Router,
     Server,
 };
-use clap::{
-    Parser,
-    ValueEnum,
-};
+use clap::Parser;
 use kube_leader_election::{
     LeaseLock,
     LeaseLockParams,
@@ -64,17 +61,24 @@ use tokio::{
     sync::mpsc::Sender,
     task::JoinHandle,
 };
-use tracing::info_span;
+use tower::ServiceBuilder;
+use tower_http::{
+    compression::CompressionLayer,
+    trace::TraceLayer,
+};
+use tracing::{
+    event,
+    instrument,
+    warn,
+    Instrument,
+};
+use tracing_subscriber::{
+    fmt,
+    prelude::*,
+    EnvFilter,
+};
 
 use crate::process_launcher::ProcessManager;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
-enum LogFormat {
-    Json,
-    Default,
-    Pretty,
-    Compact,
-}
 
 /// Simple program to greet a person
 #[derive(Parser, Debug)]
@@ -103,30 +107,28 @@ struct Args {
     /// Command to run
     #[arg(last = true)]
     command: Vec<String>,
-
-    #[arg(short = 'f', long, env, default_value = "default")]
-    log_format: LogFormat,
 }
 
 #[derive(Debug, Eq, PartialEq, Clone, Copy)]
 enum AbcState {
-    Init,
-    Leader,
-    Shutdown,
-    RenewAttempt,
-    Follower,
+    BeganInit,
+    BecameLeader,
+    BeganShutdown,
+    BeganRenewAttempt,
+    BecameFollower,
 }
 
+#[instrument]
 #[tokio::main]
 async fn main() -> MietteResult<()> {
     let args = Args::parse();
-    o11y(args.log_format);
+    o11y()?;
 
     let lease_ttl = Duration::from_secs(args.lease_ttl);
     let renew_ttl = lease_ttl / 3;
 
     let server_listen_addr = args.listen_addr.parse::<SocketAddr>().into_diagnostic()?;
-    let current_state = Arc::new(RwLock::from(AbcState::Init));
+    let current_state = Arc::new(RwLock::from(AbcState::BeganInit));
     let (mptx, mut mprx) = sync::mpsc::channel(10);
     let mut join_handles = Vec::new();
 
@@ -145,7 +147,7 @@ async fn main() -> MietteResult<()> {
         loop {
             tokio::time::sleep(renew_ttl).await;
             heartbeat_channel
-                .send(AbcState::RenewAttempt)
+                .send(AbcState::BeganRenewAttempt)
                 .await
                 .expect("Failed to send heartbeat");
         }
@@ -153,15 +155,16 @@ async fn main() -> MietteResult<()> {
     join_handles.push(renew_heartbeat_handle);
 
     let shutdown_channel = mptx.clone();
-    tokio::spawn(async move {
+    let ctrl_c = async move {
         tokio::signal::ctrl_c()
             .await
             .expect("Failed to listen for ctrl-c");
         shutdown_channel
-            .send(AbcState::Shutdown)
+            .send(AbcState::BeganShutdown)
             .await
             .expect("Failed to send");
-    });
+    };
+    tokio::spawn(ctrl_c.instrument(tracing::info_span!("ctrl_c")));
 
     join_handles.push(start_status_server(
         server_listen_addr,
@@ -175,31 +178,25 @@ async fn main() -> MietteResult<()> {
         let mprx_value = mprx.recv().await;
 
         if let Some(abc_state) = mprx_value {
-            if abc_state == AbcState::Leader || abc_state == AbcState::Follower {
+            event!(tracing::Level::INFO, "{:?}", abc_state);
+
+            if abc_state == AbcState::BecameLeader || abc_state == AbcState::BecameFollower {
                 let mut w = current_state.write().expect("Failed to get write lock");
                 *w = abc_state;
             }
         };
 
         match mprx_value {
-            Some(AbcState::Init) => {
-                let span = info_span!("tick.init", hostname = %args.hostname);
-                let _span_guard = span.enter();
+            Some(AbcState::BeganInit) => {
                 get_lease(mptx.clone(), &leadership).await?;
             }
-            Some(AbcState::RenewAttempt) => {
-                let span = info_span!("tick.renew_attempt", hostname = %args.hostname);
-                let _span_guard = span.enter();
+            Some(AbcState::BeganRenewAttempt) => {
                 get_lease(mptx.clone(), &leadership).await?;
             }
-            Some(AbcState::Follower) => {
-                let span = info_span!("tick.follower", hostname = %args.hostname);
-                let _span_guard = span.enter();
+            Some(AbcState::BecameFollower) => {
                 spawned_process.stop()?;
             }
-            Some(AbcState::Shutdown) => {
-                let span = info_span!("tick.shutdown", hostname = %args.hostname);
-                let _span_guard = span.enter();
+            Some(AbcState::BeganShutdown) => {
                 spawned_process.stop()?;
                 shutdown(current_state, &mut join_handles, leadership).await?;
 
@@ -209,19 +206,16 @@ async fn main() -> MietteResult<()> {
 
                 break;
             }
-            Some(AbcState::Leader) => {
-                let span = info_span!("tick.leader", hostname = %args.hostname);
-                let _span_guard = span.enter();
-
+            Some(AbcState::BecameLeader) => {
                 spawned_process.start()?;
 
                 if !spawned_process.check_if_running() {
-                    mptx.send(AbcState::Shutdown).await.expect("Failed to send");
+                    mptx.send(AbcState::BeganShutdown)
+                        .await
+                        .expect("Failed to send");
                 }
             }
             None => {
-                let span = info_span!("tick.nop", hostname = %args.hostname);
-                let _span_guard = span.enter();
                 tokio::time::sleep(renew_ttl).await;
             }
         }
@@ -230,36 +224,29 @@ async fn main() -> MietteResult<()> {
     Ok(())
 }
 
-fn o11y(format: LogFormat) {
-    match format {
-        LogFormat::Json => {
-            tracing_subscriber::fmt()
-                .event_format(tracing_subscriber::fmt::format().json())
-                .init();
-        }
-        LogFormat::Pretty => {
-            tracing_subscriber::fmt()
-                .event_format(tracing_subscriber::fmt::format().pretty())
-                .init();
-        }
-        LogFormat::Compact => {
-            tracing_subscriber::fmt()
-                .event_format(tracing_subscriber::fmt::format().compact())
-                .init();
-        }
-        LogFormat::Default => {
-            tracing_subscriber::fmt().init();
-        }
-    }
+fn o11y() -> MietteResult<()> {
     miette::set_panic_hook();
+
+    let fmt_layer = fmt::layer();
+    let filter_layer = EnvFilter::try_from_default_env()
+        .or_else(|_| EnvFilter::try_new("trace"))
+        .into_diagnostic()?;
+
+    tracing_subscriber::registry()
+        .with(filter_layer)
+        .with(fmt_layer)
+        .init();
+
+    Ok(())
 }
 
+#[instrument(skip(leadership))]
 async fn shutdown(
     current_state: Arc<RwLock<AbcState>>,
     join_handles: &mut Vec<JoinHandle<()>>,
     leadership: LeaseLock,
 ) -> MietteResult<()> {
-    if *current_state.read().expect("Failed to get read lock") == AbcState::Leader {
+    if *current_state.read().expect("Failed to get read lock") == AbcState::BecameLeader {
         leadership.step_down().await.into_diagnostic()?;
     }
 
@@ -269,15 +256,15 @@ async fn shutdown(
     Ok(())
 }
 
+#[instrument(skip(leadership))]
 async fn get_lease(tx: Sender<AbcState>, leadership: &LeaseLock) -> MietteResult<()> {
     let lease_lock_result = leadership.try_acquire_or_renew().await;
     match lease_lock_result {
         Ok(LeaseLockResult {
             acquired_lease: true,
-            lease: Some(lease),
+            lease: Some(_),
         }) => {
-            tracing::trace!("Acquired lease {:?}", lease);
-            tx.send(AbcState::Leader).await.into_diagnostic()?;
+            tx.send(AbcState::BecameLeader).await.into_diagnostic()?;
         }
         Ok(
             LeaseLockResult {
@@ -289,21 +276,27 @@ async fn get_lease(tx: Sender<AbcState>, leadership: &LeaseLock) -> MietteResult
                 lease: _,
             },
         ) => {
-            tx.send(AbcState::Follower).await.into_diagnostic()?;
+            tx.send(AbcState::BecameFollower).await.into_diagnostic()?;
         }
         Err(err) => {
-            tx.send(AbcState::Follower).await.into_diagnostic()?;
-            tracing::warn!("Failed to acquire lease, continuing: {}", err);
+            tx.send(AbcState::BecameFollower).await.into_diagnostic()?;
+            warn!("Failed to acquire lease, continuing: {:?}", err);
         }
     };
     Ok(())
 }
 
+#[instrument]
 fn start_status_server(
     server_listen_addr: SocketAddr,
     current_state: Arc<RwLock<AbcState>>,
 ) -> JoinHandle<()> {
     let app = Router::new()
+        .layer(
+            ServiceBuilder::new()
+                .layer(TraceLayer::new_for_http())
+                .layer(CompressionLayer::new()),
+        )
         .layer(Extension(current_state.clone()))
         .route(
             "/",
@@ -311,11 +304,11 @@ fn start_status_server(
                 move |State(is_leader): State<Arc<RwLock<AbcState>>>| async move {
                     let state = *(is_leader.read().expect("Failed to read state"));
                     match state {
-                        AbcState::Follower => (
+                        AbcState::BecameFollower => (
                             StatusCode::NOT_FOUND,
                             Json(json!({"status": "ok", "state": "follower"})),
                         ),
-                        AbcState::Leader => (
+                        AbcState::BecameLeader => (
                             StatusCode::OK,
                             Json(json!({"status": "ok", "state": "leader"})),
                         ),
@@ -329,10 +322,11 @@ fn start_status_server(
         )
         .with_state(current_state);
 
-    tokio::spawn(async move {
+    let start_http_server = async move {
         Server::bind(&server_listen_addr)
             .serve(app.into_make_service())
             .await
             .expect("Failed to start server");
-    })
+    };
+    tokio::spawn(start_http_server.instrument(tracing::info_span!("http_server")))
 }
