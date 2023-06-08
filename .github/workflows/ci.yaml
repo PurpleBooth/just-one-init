@@ -38,6 +38,10 @@ jobs:
           components: rustfmt, clippy
       - name: Run lints
         run: just lint
+      - run: cargo build
+        name: Try build
+      - run: cargo build --release
+        name: Try release build
       - name: Start k8s cluster
         run: kind create cluster --name kind
       - name: Run e2e test
