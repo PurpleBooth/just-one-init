@@ -12,7 +12,11 @@ use miette::{
     IntoDiagnostic,
     Result,
 };
-use tracing::{event, info, instrument, trace};
+use tracing::{
+    info,
+    instrument,
+    trace,
+};
 use which::which;
 
 #[derive(Debug)]

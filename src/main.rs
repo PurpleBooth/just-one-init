@@ -180,7 +180,9 @@ async fn main() -> MietteResult<()> {
         if let Some(abc_state) = mprx_value {
             event!(tracing::Level::INFO, "{:?}", abc_state);
 
-            if abc_state == JustOneInitState::BecameLeader || abc_state == JustOneInitState::BecameFollower {
+            if abc_state == JustOneInitState::BecameLeader
+                || abc_state == JustOneInitState::BecameFollower
+            {
                 let mut w = current_state.write().expect("Failed to get write lock");
                 *w = abc_state;
             }
@@ -264,7 +266,9 @@ async fn get_lease(tx: Sender<JustOneInitState>, leadership: &LeaseLock) -> Miet
             acquired_lease: true,
             lease: Some(_),
         }) => {
-            tx.send(JustOneInitState::BecameLeader).await.into_diagnostic()?;
+            tx.send(JustOneInitState::BecameLeader)
+                .await
+                .into_diagnostic()?;
         }
         Ok(
             LeaseLockResult {
@@ -276,10 +280,14 @@ async fn get_lease(tx: Sender<JustOneInitState>, leadership: &LeaseLock) -> Miet
                 lease: _,
             },
         ) => {
-            tx.send(JustOneInitState::BecameFollower).await.into_diagnostic()?;
+            tx.send(JustOneInitState::BecameFollower)
+                .await
+                .into_diagnostic()?;
         }
         Err(err) => {
-            tx.send(JustOneInitState::BecameFollower).await.into_diagnostic()?;
+            tx.send(JustOneInitState::BecameFollower)
+                .await
+                .into_diagnostic()?;
             warn!("Failed to acquire lease, continuing: {:?}", err);
         }
     };
