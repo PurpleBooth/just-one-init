@@ -12,10 +12,7 @@ use miette::{
     IntoDiagnostic,
     Result,
 };
-use tracing::{
-    event,
-    instrument,
-};
+use tracing::{event, info, instrument, trace};
 use which::which;
 
 #[derive(Debug)]
@@ -57,13 +54,13 @@ impl ProcessManager {
     pub(crate) fn stop(&mut self) -> Result<()> {
         match self.process {
             Some(Err(_)) | None => {
-                event!(tracing::Level::TRACE, "No process running");
+                trace!("No process running");
                 Ok(())
             }
             Some(Ok(ref mut child)) => {
-                event!(tracing::Level::INFO, "Stopping process");
                 child.kill().into_diagnostic()?;
                 self.process = Some(Err(child.wait().into_diagnostic()?));
+                info!("Stopped process");
 
                 Ok(())
             }
@@ -75,6 +72,7 @@ impl ProcessManager {
     #[instrument]
     pub(crate) fn start(&mut self) -> Result<()> {
         if self.process.is_some() {
+            trace!("Process already running");
             return Ok(());
         }
 
@@ -86,6 +84,7 @@ impl ProcessManager {
             .stderr(Stdio::inherit())
             .spawn()
             .into_diagnostic()?;
+        info!("Started process");
         self.process = Some(Ok(child));
 
         Ok(())
