@@ -110,7 +110,7 @@ struct Args {
 }
 
 #[derive(Debug, Eq, PartialEq, Clone, Copy)]
-enum AbcState {
+enum JustOneInitState {
     BeganInit,
     BecameLeader,
     BeganShutdown,
@@ -128,7 +128,7 @@ async fn main() -> MietteResult<()> {
     let renew_ttl = lease_ttl / 3;
 
     let server_listen_addr = args.listen_addr.parse::<SocketAddr>().into_diagnostic()?;
-    let current_state = Arc::new(RwLock::from(AbcState::BeganInit));
+    let current_state = Arc::new(RwLock::from(JustOneInitState::BeganInit));
     let (mptx, mut mprx) = sync::mpsc::channel(10);
     let mut join_handles = Vec::new();
 
@@ -147,7 +147,7 @@ async fn main() -> MietteResult<()> {
         loop {
             tokio::time::sleep(renew_ttl).await;
             heartbeat_channel
-                .send(AbcState::BeganRenewAttempt)
+                .send(JustOneInitState::BeganRenewAttempt)
                 .await
                 .expect("Failed to send heartbeat");
         }
@@ -160,7 +160,7 @@ async fn main() -> MietteResult<()> {
             .await
             .expect("Failed to listen for ctrl-c");
         shutdown_channel
-            .send(AbcState::BeganShutdown)
+            .send(JustOneInitState::BeganShutdown)
             .await
             .expect("Failed to send");
     };
@@ -180,23 +180,23 @@ async fn main() -> MietteResult<()> {
         if let Some(abc_state) = mprx_value {
             event!(tracing::Level::INFO, "{:?}", abc_state);
 
-            if abc_state == AbcState::BecameLeader || abc_state == AbcState::BecameFollower {
+            if abc_state == JustOneInitState::BecameLeader || abc_state == JustOneInitState::BecameFollower {
                 let mut w = current_state.write().expect("Failed to get write lock");
                 *w = abc_state;
             }
         };
 
         match mprx_value {
-            Some(AbcState::BeganInit) => {
+            Some(JustOneInitState::BeganInit) => {
                 get_lease(mptx.clone(), &leadership).await?;
             }
-            Some(AbcState::BeganRenewAttempt) => {
+            Some(JustOneInitState::BeganRenewAttempt) => {
                 get_lease(mptx.clone(), &leadership).await?;
             }
-            Some(AbcState::BecameFollower) => {
+            Some(JustOneInitState::BecameFollower) => {
                 spawned_process.stop()?;
             }
-            Some(AbcState::BeganShutdown) => {
+            Some(JustOneInitState::BeganShutdown) => {
                 spawned_process.stop()?;
                 shutdown(current_state, &mut join_handles, leadership).await?;
 
@@ -206,11 +206,11 @@ async fn main() -> MietteResult<()> {
 
                 break;
             }
-            Some(AbcState::BecameLeader) => {
+            Some(JustOneInitState::BecameLeader) => {
                 spawned_process.start()?;
 
                 if !spawned_process.check_if_running() {
-                    mptx.send(AbcState::BeganShutdown)
+                    mptx.send(JustOneInitState::BeganShutdown)
                         .await
                         .expect("Failed to send");
                 }
@@ -242,11 +242,11 @@ fn o11y() -> MietteResult<()> {
 
 #[instrument(skip(leadership))]
 async fn shutdown(
-    current_state: Arc<RwLock<AbcState>>,
+    current_state: Arc<RwLock<JustOneInitState>>,
     join_handles: &mut Vec<JoinHandle<()>>,
     leadership: LeaseLock,
 ) -> MietteResult<()> {
-    if *current_state.read().expect("Failed to get read lock") == AbcState::BecameLeader {
+    if *current_state.read().expect("Failed to get read lock") == JustOneInitState::BecameLeader {
         leadership.step_down().await.into_diagnostic()?;
     }
 
@@ -257,14 +257,14 @@ async fn shutdown(
 }
 
 #[instrument(skip(leadership))]
-async fn get_lease(tx: Sender<AbcState>, leadership: &LeaseLock) -> MietteResult<()> {
+async fn get_lease(tx: Sender<JustOneInitState>, leadership: &LeaseLock) -> MietteResult<()> {
     let lease_lock_result = leadership.try_acquire_or_renew().await;
     match lease_lock_result {
         Ok(LeaseLockResult {
             acquired_lease: true,
             lease: Some(_),
         }) => {
-            tx.send(AbcState::BecameLeader).await.into_diagnostic()?;
+            tx.send(JustOneInitState::BecameLeader).await.into_diagnostic()?;
         }
         Ok(
             LeaseLockResult {
@@ -276,10 +276,10 @@ async fn get_lease(tx: Sender<AbcState>, leadership: &LeaseLock) -> MietteResult
                 lease: _,
             },
         ) => {
-            tx.send(AbcState::BecameFollower).await.into_diagnostic()?;
+            tx.send(JustOneInitState::BecameFollower).await.into_diagnostic()?;
         }
         Err(err) => {
-            tx.send(AbcState::BecameFollower).await.into_diagnostic()?;
+            tx.send(JustOneInitState::BecameFollower).await.into_diagnostic()?;
             warn!("Failed to acquire lease, continuing: {:?}", err);
         }
     };
@@ -289,7 +289,7 @@ async fn get_lease(tx: Sender<AbcState>, leadership: &LeaseLock) -> MietteResult
 #[instrument]
 fn start_status_server(
     server_listen_addr: SocketAddr,
-    current_state: Arc<RwLock<AbcState>>,
+    current_state: Arc<RwLock<JustOneInitState>>,
 ) -> JoinHandle<()> {
     let app = Router::new()
         .layer(
@@ -301,14 +301,14 @@ fn start_status_server(
         .route(
             "/",
             get(
-                move |State(is_leader): State<Arc<RwLock<AbcState>>>| async move {
+                move |State(is_leader): State<Arc<RwLock<JustOneInitState>>>| async move {
                     let state = *(is_leader.read().expect("Failed to read state"));
                     match state {
-                        AbcState::BecameFollower => (
+                        JustOneInitState::BecameFollower => (
                             StatusCode::NOT_FOUND,
                             Json(json!({"status": "ok", "state": "follower"})),
                         ),
-                        AbcState::BecameLeader => (
+                        JustOneInitState::BecameLeader => (
                             StatusCode::OK,
                             Json(json!({"status": "ok", "state": "leader"})),
                         ),
