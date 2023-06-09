@@ -16,6 +16,7 @@ use tracing::{
     event,
     instrument,
 };
+use which::which;
 
 #[derive(Debug)]
 pub struct ProcessManager {
@@ -71,14 +72,15 @@ impl ProcessManager {
 
     // Panic in Result function for compatibility with non result functions
     #[allow(clippy::panic_in_result_fn)]
-    #[instrument(fields(command = %self.command))]
+    #[instrument]
     pub(crate) fn start(&mut self) -> Result<()> {
         if self.process.is_some() {
             return Ok(());
         }
 
         let arguments = shellwords::split(&self.command).into_diagnostic()?;
-        let child = Command::new(&arguments[0])
+        let program = which(&arguments[0]).into_diagnostic()?;
+        let child = Command::new(program)
             .args(&arguments[1..])
             .stdout(Stdio::inherit())
             .stderr(Stdio::inherit())
