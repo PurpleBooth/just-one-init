@@ -175,7 +175,7 @@ async fn main() -> MietteResult<()> {
 
     let mptx = mptx.clone();
     loop {
-        let mprx_value = mprx.recv().await;
+        let mprx_value = mprx.try_recv().ok();
 
         if let Some(abc_state) = mprx_value {
             event!(tracing::Level::INFO, "{:?}", abc_state);
