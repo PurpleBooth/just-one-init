@@ -34,7 +34,7 @@ impl From<Vec<String>> for ProcessManager {
 impl ProcessManager {
     // Panic in Result function for compatibility with non result functions
     #[allow(clippy::panic_in_result_fn)]
-    #[instrument(fields(command = %self.command))]
+    #[instrument]
     pub fn check_if_exit_successful(&mut self) -> Option<bool> {
         match self.process {
             None => None,
@@ -52,7 +52,7 @@ impl ProcessManager {
 
     // Panic in Result function for compatibility with non result functions
     #[allow(clippy::panic_in_result_fn)]
-    #[instrument(fields(command = %self.command))]
+    #[instrument]
     pub(crate) fn stop(&mut self) -> Result<()> {
         match self.process {
             Some(Err(_)) | None => {
@@ -91,7 +91,7 @@ impl ProcessManager {
 
     // Panic in Result function for compatiblity with non result functions
     #[allow(clippy::panic_in_result_fn)]
-    #[instrument(fields(command = %self.command))]
+    #[instrument]
     pub fn check_if_running(&mut self) -> bool {
         match self.process {
             Some(Err(_)) | None => false,

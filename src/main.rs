@@ -229,7 +229,7 @@ fn o11y() -> MietteResult<()> {
 
     let fmt_layer = fmt::layer();
     let filter_layer = EnvFilter::try_from_default_env()
-        .or_else(|_| EnvFilter::try_new("trace"))
+        .or_else(|_| EnvFilter::try_new("info"))
         .into_diagnostic()?;
 
     tracing_subscriber::registry()
