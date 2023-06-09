@@ -97,7 +97,7 @@ struct Args {
     hostname: String,
 
     /// Hostname to use for leader election, this will be used as the name of an instance contending for leadership, and must be unique
-    #[arg(short = 'a', long, env, default_value = "127.0.0.1:5047")]
+    #[arg(short = 'a', long, env, default_value = "[::]:5047")]
     listen_addr: String,
 
     /// TTL for lease, will try to renew at one third this time, so if this is 15, it will try to renew at 5 seconds
