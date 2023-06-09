@@ -23,7 +23,6 @@ while [ "$(curl --write-out "%{http_code}\n" --silent --output /dev/null "http:/
 done
 
 ./target/release/just-one-init \
-	--listen-addr="127.0.0.1:5047" \
 	--lease-name="$LEASE_NAME" \
 	--hostname second \
 	--pod-namespace default -- \
