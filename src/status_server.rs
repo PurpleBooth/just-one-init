@@ -47,15 +47,15 @@ pub fn spawn(
                     match state {
                         JustOneInitState::BecameFollower => (
                             StatusCode::NOT_FOUND,
-                            Json(json!({"status": "ok", "state": "follower"})),
+                            Json(json!({"status": "ok", "state": JustOneInitState::BecameFollower.to_string()})),
                         ),
                         JustOneInitState::BecameLeader => (
                             StatusCode::OK,
-                            Json(json!({"status": "ok", "state": "leader"})),
+                            Json(json!({"status": "ok", "state": JustOneInitState::BecameLeader.to_string()})),
                         ),
-                        _ => (
-                            StatusCode::INTERNAL_SERVER_ERROR,
-                            Json(json!({"status": "error", "state": "unknown"})),
+                        JustOneInitState::BeganShutdown => (
+                            StatusCode::SERVICE_UNAVAILABLE,
+                            Json(json!({"status": "error", "state": JustOneInitState::BeganShutdown.to_string()})),
                         ),
                     }
                 },
