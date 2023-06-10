@@ -27,6 +27,7 @@ mod process_launcher;
 mod status_server;
 
 use std::{
+    fmt::Display,
     net::SocketAddr,
     option::Option,
     sync::Arc,
@@ -50,10 +51,8 @@ use tokio::{
         mpsc::Sender,
         RwLock as TokioRwLock,
     },
-    task::JoinHandle,
 };
 use tracing::{
-    event,
     instrument,
     warn,
     Instrument,
@@ -98,16 +97,22 @@ struct Args {
 /// Events that the actor handles
 #[derive(Debug, Eq, PartialEq, Clone, Copy)]
 pub enum JustOneInitState {
-    /// Actor is initializing
-    BeganInit,
     /// Actor is leader and should run process
     BecameLeader,
     /// Actor is shutting down
     BeganShutdown,
-    /// Actor is renewing lease
-    BeganRenewAttempt,
     /// Actor is follower and should not run process
     BecameFollower,
+}
+
+impl Display for JustOneInitState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::BecameLeader => write!(f, "BecameLeader"),
+            Self::BeganShutdown => write!(f, "BeganShutdown"),
+            Self::BecameFollower => write!(f, "BecameFollower"),
+        }
+    }
 }
 
 #[instrument]
@@ -120,8 +125,8 @@ async fn main() -> MietteResult<()> {
     let renew_ttl = lease_ttl / 3;
 
     let server_listen_addr = args.listen_addr.parse::<SocketAddr>().into_diagnostic()?;
-    let current_state = Arc::new(TokioRwLock::from(JustOneInitState::BeganInit));
-    let (mptx, mut mprx) = sync::mpsc::channel(10);
+    let state = Arc::new(TokioRwLock::from(JustOneInitState::BecameFollower));
+    let (event_sender, mut event_receiver) = sync::mpsc::channel(10);
     let mut join_handles = Vec::new();
 
     let leadership = LeaseLock::new(
@@ -134,79 +139,62 @@ async fn main() -> MietteResult<()> {
         },
     );
 
-    let heartbeat_channel = mptx.clone();
-    let renew_heartbeat_handle = tokio::spawn(async move {
-        loop {
-            tokio::time::sleep(renew_ttl).await;
-            heartbeat_channel
-                .try_send(JustOneInitState::BeganRenewAttempt)
-                .expect("Failed to try_send() heartbeat");
-        }
-    });
-    join_handles.push(renew_heartbeat_handle);
-
-    let shutdown_channel = mptx.clone();
+    let ctrl_c_event_sender = event_sender.clone();
     let ctrl_c = async move {
         tokio::signal::ctrl_c()
             .await
             .expect("Failed to listen for ctrl-c");
-        shutdown_channel
+        ctrl_c_event_sender
             .send(JustOneInitState::BeganShutdown)
             .await
-            .expect("Failed to try_send()");
+            .expect("Failed to send()");
     };
     tokio::spawn(ctrl_c.instrument(tracing::info_span!("ctrl_c")));
 
-    join_handles.push(status_server::spawn(
-        server_listen_addr,
-        current_state.clone(),
-    ));
+    join_handles.push(status_server::spawn(server_listen_addr, state.clone()));
 
-    let mut spawned_process = ProcessManager::from(args.command);
+    let mut process_manager = ProcessManager::from(args.command);
+    event_sender
+        .send(JustOneInitState::BecameFollower)
+        .await
+        .into_diagnostic()?;
 
-    let mptx = mptx.clone();
     loop {
-        let mprx_value = mprx.try_recv().ok();
-
-        if let Some(abc_state) = mprx_value {
-            event!(tracing::Level::INFO, "{:?}", abc_state);
-
-            if abc_state == JustOneInitState::BecameLeader
-                || abc_state == JustOneInitState::BecameFollower
-            {
-                *current_state.write().await = abc_state;
-            }
-        };
-
-        match mprx_value {
-            Some(JustOneInitState::BeganInit) => {
-                get_lease(mptx.clone(), &leadership).await?;
-            }
-            Some(JustOneInitState::BeganRenewAttempt) => {
-                get_lease(mptx.clone(), &leadership).await?;
-            }
+        match event_receiver.try_recv().ok() {
             Some(JustOneInitState::BecameFollower) => {
-                spawned_process.stop()?;
+                *state.write().await = JustOneInitState::BecameFollower;
+                process_manager.stop()?;
             }
             Some(JustOneInitState::BeganShutdown) => {
-                spawned_process.stop()?;
-                shutdown(current_state, &mut join_handles, leadership).await?;
+                process_manager.stop()?;
 
-                if spawned_process.check_if_exit_successful() == Some(false) {
+                if *state.read().await == JustOneInitState::BecameLeader {
+                    leadership.step_down().await.into_diagnostic()?;
+                }
+
+                for join_handle in &mut join_handles {
+                    join_handle.abort();
+                }
+
+                if process_manager.check_if_exit_successful() == Some(false) {
                     return Err(miette!("Process exited with non-zero exit code"));
                 }
 
                 break;
             }
             Some(JustOneInitState::BecameLeader) => {
-                spawned_process.start()?;
+                *state.write().await = JustOneInitState::BecameLeader;
+                process_manager.start()?;
 
-                if !spawned_process.check_if_running() {
-                    mptx.try_send(JustOneInitState::BeganShutdown)
+                if !process_manager.check_if_running() {
+                    event_sender
+                        .send(JustOneInitState::BeganShutdown)
+                        .await
                         .into_diagnostic()?;
                 }
             }
             None => {
+                get_lease(event_sender.clone(), &leadership).await?;
                 tokio::time::sleep(renew_ttl).await;
             }
         }
@@ -232,22 +220,6 @@ fn o11y() -> MietteResult<()> {
 }
 
 #[instrument(skip(leadership))]
-async fn shutdown(
-    current_state: Arc<TokioRwLock<JustOneInitState>>,
-    join_handles: &mut Vec<JoinHandle<()>>,
-    leadership: LeaseLock,
-) -> MietteResult<()> {
-    if *current_state.read().await == JustOneInitState::BecameLeader {
-        leadership.step_down().await.into_diagnostic()?;
-    }
-
-    for join_handle in join_handles {
-        join_handle.abort();
-    }
-    Ok(())
-}
-
-#[instrument(skip(leadership))]
 async fn get_lease(tx: Sender<JustOneInitState>, leadership: &LeaseLock) -> MietteResult<()> {
     let lease_lock_result = leadership.try_acquire_or_renew().await;
     match lease_lock_result {
@@ -255,7 +227,8 @@ async fn get_lease(tx: Sender<JustOneInitState>, leadership: &LeaseLock) -> Miet
             acquired_lease: true,
             lease: Some(_),
         }) => {
-            tx.try_send(JustOneInitState::BecameLeader)
+            tx.send(JustOneInitState::BecameLeader)
+                .await
                 .into_diagnostic()?;
         }
         Ok(
@@ -268,11 +241,13 @@ async fn get_lease(tx: Sender<JustOneInitState>, leadership: &LeaseLock) -> Miet
                 lease: _,
             },
         ) => {
-            tx.try_send(JustOneInitState::BecameFollower)
+            tx.send(JustOneInitState::BecameFollower)
+                .await
                 .into_diagnostic()?;
         }
         Err(err) => {
-            tx.try_send(JustOneInitState::BecameFollower)
+            tx.send(JustOneInitState::BecameFollower)
+                .await
                 .into_diagnostic()?;
             warn!("Failed to acquire lease, continuing: {:?}", err);
         }

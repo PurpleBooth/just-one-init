@@ -62,7 +62,10 @@ impl ProcessManager {
                 Ok(())
             }
             Some(Ok(ref mut child)) => {
-                child.kill().into_diagnostic()?;
+                if child.try_wait().ok().flatten().is_none() {
+                    child.kill().into_diagnostic()?;
+                }
+
                 self.process = Some(Err(child.wait().into_diagnostic()?));
                 info!("Stopped process");
 
