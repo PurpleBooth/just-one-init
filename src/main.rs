@@ -212,9 +212,8 @@ async fn main() -> MietteResult<()> {
                 spawned_process.start()?;
 
                 if !spawned_process.check_if_running() {
-                    mptx.send(JustOneInitState::BeganShutdown)
-                        .await
-                        .expect("Failed to send");
+                    mptx.try_send(JustOneInitState::BeganShutdown)
+                        .into_diagnostic()?;
                 }
             }
             None => {
