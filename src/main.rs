@@ -24,26 +24,15 @@
 )]
 
 mod process_launcher;
+mod status_server;
 
 use std::{
     net::SocketAddr,
     option::Option,
-    sync::{
-        Arc,
-        RwLock,
-    },
+    sync::Arc,
     time::Duration,
 };
 
-use axum::{
-    extract::State,
-    http::StatusCode,
-    response::Json,
-    routing::get,
-    Extension,
-    Router,
-    Server,
-};
 use clap::Parser;
 use kube_leader_election::{
     LeaseLock,
@@ -55,16 +44,13 @@ use miette::{
     IntoDiagnostic,
     Result as MietteResult,
 };
-use serde_json::json;
 use tokio::{
     sync,
-    sync::mpsc::Sender,
+    sync::{
+        mpsc::Sender,
+        RwLock as TokioRwLock,
+    },
     task::JoinHandle,
-};
-use tower::ServiceBuilder;
-use tower_http::{
-    compression::CompressionLayer,
-    trace::TraceLayer,
 };
 use tracing::{
     event,
@@ -109,12 +95,18 @@ struct Args {
     command: Vec<String>,
 }
 
+/// Events that the actor handles
 #[derive(Debug, Eq, PartialEq, Clone, Copy)]
-enum JustOneInitState {
+pub enum JustOneInitState {
+    /// Actor is initializing
     BeganInit,
+    /// Actor is leader and should run process
     BecameLeader,
+    /// Actor is shutting down
     BeganShutdown,
+    /// Actor is renewing lease
     BeganRenewAttempt,
+    /// Actor is follower and should not run process
     BecameFollower,
 }
 
@@ -128,7 +120,7 @@ async fn main() -> MietteResult<()> {
     let renew_ttl = lease_ttl / 3;
 
     let server_listen_addr = args.listen_addr.parse::<SocketAddr>().into_diagnostic()?;
-    let current_state = Arc::new(RwLock::from(JustOneInitState::BeganInit));
+    let current_state = Arc::new(TokioRwLock::from(JustOneInitState::BeganInit));
     let (mptx, mut mprx) = sync::mpsc::channel(10);
     let mut join_handles = Vec::new();
 
@@ -165,7 +157,7 @@ async fn main() -> MietteResult<()> {
     };
     tokio::spawn(ctrl_c.instrument(tracing::info_span!("ctrl_c")));
 
-    join_handles.push(start_status_server(
+    join_handles.push(status_server::spawn(
         server_listen_addr,
         current_state.clone(),
     ));
@@ -182,8 +174,7 @@ async fn main() -> MietteResult<()> {
             if abc_state == JustOneInitState::BecameLeader
                 || abc_state == JustOneInitState::BecameFollower
             {
-                let mut w = current_state.write().expect("Failed to get write lock");
-                *w = abc_state;
+                *current_state.write().await = abc_state;
             }
         };
 
@@ -242,11 +233,11 @@ fn o11y() -> MietteResult<()> {
 
 #[instrument(skip(leadership))]
 async fn shutdown(
-    current_state: Arc<RwLock<JustOneInitState>>,
+    current_state: Arc<TokioRwLock<JustOneInitState>>,
     join_handles: &mut Vec<JoinHandle<()>>,
     leadership: LeaseLock,
 ) -> MietteResult<()> {
-    if *current_state.read().expect("Failed to get read lock") == JustOneInitState::BecameLeader {
+    if *current_state.read().await == JustOneInitState::BecameLeader {
         leadership.step_down().await.into_diagnostic()?;
     }
 
@@ -287,49 +278,4 @@ async fn get_lease(tx: Sender<JustOneInitState>, leadership: &LeaseLock) -> Miet
         }
     };
     Ok(())
-}
-
-#[instrument]
-fn start_status_server(
-    server_listen_addr: SocketAddr,
-    current_state: Arc<RwLock<JustOneInitState>>,
-) -> JoinHandle<()> {
-    let app = Router::new()
-        .layer(
-            ServiceBuilder::new()
-                .layer(TraceLayer::new_for_http())
-                .layer(CompressionLayer::new()),
-        )
-        .layer(Extension(current_state.clone()))
-        .route(
-            "/",
-            get(
-                move |State(is_leader): State<Arc<RwLock<JustOneInitState>>>| async move {
-                    let state = *(is_leader.read().expect("Failed to read state"));
-                    match state {
-                        JustOneInitState::BecameFollower => (
-                            StatusCode::NOT_FOUND,
-                            Json(json!({"status": "ok", "state": "follower"})),
-                        ),
-                        JustOneInitState::BecameLeader => (
-                            StatusCode::OK,
-                            Json(json!({"status": "ok", "state": "leader"})),
-                        ),
-                        _ => (
-                            StatusCode::INTERNAL_SERVER_ERROR,
-                            Json(json!({"status": "error", "state": "unknown"})),
-                        ),
-                    }
-                },
-            ),
-        )
-        .with_state(current_state);
-
-    let start_http_server = async move {
-        Server::bind(&server_listen_addr)
-            .serve(app.into_make_service())
-            .await
-            .expect("Failed to start server");
-    };
-    tokio::spawn(start_http_server.instrument(tracing::info_span!("http_server")))
 }
