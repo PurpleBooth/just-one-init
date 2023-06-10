@@ -191,4 +191,14 @@ mod tests {
         let mut process = ProcessManager::from(cmd);
         assert!(!process.check_if_running());
     }
+    #[test]
+    fn a_stopped_process_can_be_stopped_again() {
+        let cmd = vec!["bash".to_string(), "-c".to_string(), "exit 0".to_string()];
+        let mut process = ProcessManager::from(cmd);
+
+        while process.check_if_running() {
+            sleep(Duration::from_millis(100));
+        }
+        process.stop().expect("Failed to stop process");
+    }
 }
