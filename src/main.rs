@@ -159,6 +159,7 @@ async fn main() -> MietteResult<()> {
         .await
         .into_diagnostic()?;
 
+    let mut interval = tokio::time::interval(renew_ttl);
     loop {
         match event_receiver.try_recv().ok() {
             Some(JustOneInitState::BecameFollower) => {
@@ -195,7 +196,7 @@ async fn main() -> MietteResult<()> {
             }
             None => {
                 get_lease(event_sender.clone(), &leadership).await?;
-                tokio::time::sleep(renew_ttl).await;
+                interval.tick().await;
             }
         }
     }
