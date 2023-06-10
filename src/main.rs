@@ -147,9 +147,8 @@ async fn main() -> MietteResult<()> {
         loop {
             tokio::time::sleep(renew_ttl).await;
             heartbeat_channel
-                .send(JustOneInitState::BeganRenewAttempt)
-                .await
-                .expect("Failed to send heartbeat");
+                .try_send(JustOneInitState::BeganRenewAttempt)
+                .expect("Failed to try_send() heartbeat");
         }
     });
     join_handles.push(renew_heartbeat_handle);
@@ -162,7 +161,7 @@ async fn main() -> MietteResult<()> {
         shutdown_channel
             .send(JustOneInitState::BeganShutdown)
             .await
-            .expect("Failed to send");
+            .expect("Failed to try_send()");
     };
     tokio::spawn(ctrl_c.instrument(tracing::info_span!("ctrl_c")));
 
@@ -265,8 +264,7 @@ async fn get_lease(tx: Sender<JustOneInitState>, leadership: &LeaseLock) -> Miet
             acquired_lease: true,
             lease: Some(_),
         }) => {
-            tx.send(JustOneInitState::BecameLeader)
-                .await
+            tx.try_send(JustOneInitState::BecameLeader)
                 .into_diagnostic()?;
         }
         Ok(
@@ -279,13 +277,11 @@ async fn get_lease(tx: Sender<JustOneInitState>, leadership: &LeaseLock) -> Miet
                 lease: _,
             },
         ) => {
-            tx.send(JustOneInitState::BecameFollower)
-                .await
+            tx.try_send(JustOneInitState::BecameFollower)
                 .into_diagnostic()?;
         }
         Err(err) => {
-            tx.send(JustOneInitState::BecameFollower)
-                .await
+            tx.try_send(JustOneInitState::BecameFollower)
                 .into_diagnostic()?;
             warn!("Failed to acquire lease, continuing: {:?}", err);
         }
