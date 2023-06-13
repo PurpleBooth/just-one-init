@@ -186,12 +186,15 @@ jobs:
     permissions:
       contents: read
       packages: write
+      id-token: write
     env:
       REGISTRY: ghcr.io
       IMAGE_NAME: ${{ github.repository }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v3
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@v3.0.5
       - name: Lowercase image name
         run: echo "IMAGE_NAME=${IMAGE_NAME,,}" >> "$GITHUB_ENV"
       - name: Set up QEMU
@@ -215,6 +218,7 @@ jobs:
             type=raw,value=latest,enable={{is_default_branch}}
             type=raw,value=${{needs.release.outputs.version}}
       - name: Build and push Docker image
+        id: build-and-push
         uses: docker/build-push-action@44ea916f6c540f9302d50c2b1e5a8dc071f15cdf
         with:
           context: .
@@ -227,3 +231,16 @@ jobs:
             type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:buildcache,mode=max
             ${{ steps.meta.outputs.tags }}
           cache-to: type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:buildcache,mode=max
+      - name: Sign image with a key
+        run: |
+          cosign sign --yes --key env://COSIGN_PRIVATE_KEY "${TAGS}@${DIGEST}"
+        env:
+          TAGS: ${{ steps.meta.outputs.tags }}
+          COSIGN_PRIVATE_KEY: ${{ secrets.COSIGN_PRIVATE_KEY }}
+          COSIGN_PASSWORD: ${{ secrets.COSIGN_PASSWORD }}
+          DIGEST: ${{ steps.build-and-push.outputs.digest }}
+      - name: Sign the images with GitHub OIDC Token
+        env:
+          DIGEST: ${{ steps.build-and-push.outputs.digest }}
+          TAGS: ${{ steps.meta.outputs.tags }}
+        run: cosign sign --yes "${TAGS}@${DIGEST}"
