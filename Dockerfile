@@ -60,7 +60,7 @@ RUN cargo clean  \
     && cargo build \
     --release \
     --target="$( cat /tmp/target.txt )" \
-    && find . -not -path "*/target*" -type f -delete \
+    && find . -not -path "*/target*" -not -name "Cargo.toml" -not -name "Cargo.lock"  -type f -delete \
     && rm --recursive --force ./target/release/just-one-init
 # Build
 COPY . .
