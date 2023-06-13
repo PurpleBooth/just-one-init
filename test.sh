@@ -25,6 +25,7 @@ done
 ./target/release/just-one-init \
 	--lease-name="$LEASE_NAME" \
 	--listen-addr="127.0.0.1:5047" \
+	--reelect-after=30min \
 	--hostname second \
 	--pod-namespace default -- \
 	bash -c "echo hello world > \"$SECOND_FILE\"" &

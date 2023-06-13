@@ -26,3 +26,4 @@ tracing-futures = { version = "0.2.5" }
 tower-http = { version = "0.4.0", features = ["tracing", "compression-br", "compression-deflate", "compression-gzip", "compression-zstd"] }
 tower = "0.4.13"
 which = "4.4.0"
+humantime = "2.1.0"

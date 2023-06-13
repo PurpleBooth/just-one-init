@@ -23,6 +23,8 @@
     clippy::panic_in_result_fn
 )]
 
+use humantime::DurationError;
+
 mod process_launcher;
 mod status_server;
 
@@ -31,7 +33,10 @@ use std::{
     net::SocketAddr,
     option::Option,
     sync::Arc,
-    time::Duration,
+    time::{
+        Duration,
+        Instant,
+    },
 };
 
 use clap::Parser;
@@ -88,6 +93,10 @@ struct Args {
     /// TTL for lease, will try to renew at one third this time, so if this is 15, it will try to renew at 5 seconds
     #[arg(short = 't', long, env, default_value = "15")]
     lease_ttl: u64,
+
+    /// Optionally force a re-election after this duration
+    #[arg(short = 'r', long, env, value_parser = | arg: & str | -> Result < Duration, DurationError > {    Ok(arg.parse::< humantime::Duration > () ?.into())    })]
+    reelect_after: Option<Duration>,
 
     /// Command to run
     #[arg(last = true)]
@@ -159,6 +168,7 @@ async fn main() -> MietteResult<()> {
         .await
         .into_diagnostic()?;
 
+    let mut expires_after = None;
     let mut interval = tokio::time::interval(renew_ttl);
     loop {
         match event_receiver.try_recv().ok() {
@@ -192,6 +202,19 @@ async fn main() -> MietteResult<()> {
                         .send(JustOneInitState::BeganShutdown)
                         .await
                         .into_diagnostic()?;
+                }
+
+                if let Some(reelect_after) = args.reelect_after {
+                    match expires_after {
+                        Some(expiry) if expiry < Instant::now() => {
+                            expires_after = None;
+                            leadership.step_down().await.into_diagnostic()?;
+                        }
+                        None => {
+                            expires_after = Some(Instant::now() + reelect_after);
+                        }
+                        _ => {}
+                    };
                 }
             }
             None => {
