@@ -8,6 +8,7 @@ on:
   workflow_dispatch:
 jobs:
   test:
+    name: Test
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@main
@@ -52,6 +53,7 @@ jobs:
       - name: Run e2e test
         run: just test
   docker:
+    name: Build docker image
     needs: test
     runs-on: ubuntu-latest
     permissions:
@@ -111,6 +113,7 @@ jobs:
             type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:buildcache,mode=max
             ${{ steps.meta.outputs.tags }}
   dependabot:
+    name: Merge dependabot PRs
     needs:
       - docker
       - test
@@ -172,7 +175,7 @@ jobs:
           tag_name: ${{ steps.release.outputs.version }}
 
   tag-docker-release:
-    name: Tag docker release
+    name: Tag docker image
     needs: release
     runs-on: ubuntu-latest
     permissions:
