@@ -4,6 +4,7 @@ show-help:
 
 # Test it was built ok
 test:
+        cargo test
         ./test.sh
 
 # Run a smoke test and see if the app runs
