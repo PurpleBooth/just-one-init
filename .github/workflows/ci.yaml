@@ -167,13 +167,16 @@ jobs:
       - run: cargo install cargo-edit
       - name: Cocogitto release
         id: release
+        continue-on-error: true
         uses: oknozor/cocogitto-action@v3.4
         with:
           release: true
       - name: Generate Changelog
+        if: steps.release.outputs.version != ''
         run: cog changelog --at ${{ steps.release.outputs.version }} -t full_hash > GITHUB_CHANGELOG.md
 
       - name: Upload github release
+        if: steps.release.outputs.version != ''
         uses: softprops/action-gh-release@v1
         with:
           body_path: GITHUB_CHANGELOG.md
@@ -182,6 +185,7 @@ jobs:
   tag-docker-release:
     name: Tag docker image
     needs: release
+    if: needs.release.outputs.version != ''
     runs-on: ubuntu-latest
     permissions:
       contents: read
