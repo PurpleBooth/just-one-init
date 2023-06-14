@@ -10,7 +10,7 @@ pre_bump_hooks = [
     "cargo build --release",
 ]
 post_bump_hooks = [
-    "git push origin {{version}}",
+    "git push origin v{{version}}",
 ]
 
 [commit_types]
