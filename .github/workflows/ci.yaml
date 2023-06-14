@@ -247,4 +247,7 @@ jobs:
         env:
           DIGEST: ${{ steps.build-and-push.outputs.digest }}
           TAGS: ${{ steps.meta.outputs.tags }}
-        run: cosign sign --yes "${TAGS}@${DIGEST}"
+        run: |
+          for tag in $TAGS ; do
+            cosign sign --yes "${tag}@${DIGEST}"
+          done
