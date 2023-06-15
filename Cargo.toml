@@ -1,6 +1,6 @@
 [package]
 name = "just-one-init"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 license = "CC0-1.0"
 repository = "https://github.com/PurpleBooth/just-one-init"
