@@ -104,7 +104,6 @@ jobs:
         uses: docker/build-push-action@2eb1c1961a95fc15694676618e422e8ba1d63825
         with:
           context: .
-          platforms: linux/amd64,linux/arm64
           pull: true
           push: false
           tags: ${{ steps.meta.outputs.tags }}
@@ -235,16 +234,6 @@ jobs:
             type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:buildcache,mode=max
             ${{ steps.meta.outputs.tags }}
           cache-to: type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:buildcache,mode=max
-      - name: Sign image with a key
-        run: |
-          for tag in $TAGS ; do
-            cosign sign --yes --key env://COSIGN_PRIVATE_KEY "${tag}@${DIGEST}"
-          done
-        env:
-          TAGS: ${{ steps.meta.outputs.tags }}
-          COSIGN_PRIVATE_KEY: ${{ secrets.COSIGN_PRIVATE_KEY }}
-          COSIGN_PASSWORD: ${{ secrets.COSIGN_PASSWORD }}
-          DIGEST: ${{ steps.build-and-push.outputs.digest }}
       - name: Sign the images with GitHub OIDC Token
         env:
           DIGEST: ${{ steps.build-and-push.outputs.digest }}
