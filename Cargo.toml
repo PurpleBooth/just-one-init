@@ -23,7 +23,7 @@ axum = { version = "0.6.18", features = ["tracing", "http2", ] }
 serde_json = "1.0.97"
 shellwords = "1.1.0"
 tracing-futures = { version = "0.2.5" }
-tower-http = { version = "0.4.0", features = ["tracing", "compression-br", "compression-deflate", "compression-gzip", "compression-zstd"] }
+tower-http = { version = "0.4.1", features = ["tracing", "compression-br", "compression-deflate", "compression-gzip", "compression-zstd"] }
 tower = "0.4.13"
 which = "4.4.0"
 humantime = "2.1.0"
