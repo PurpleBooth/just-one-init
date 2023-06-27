@@ -16,7 +16,7 @@ jobs:
           fetch-depth: 0
 
       - name: Conventional commits check
-        uses: oknozor/cocogitto-action@v3.4
+        uses: oknozor/cocogitto-action@v3.5
       - name: Check workflow files
         run: |
           bash <(curl https://raw.githubusercontent.com/rhysd/actionlint/main/scripts/download-actionlint.bash)
@@ -167,7 +167,7 @@ jobs:
       - name: Cocogitto release
         id: release
         continue-on-error: true
-        uses: oknozor/cocogitto-action@v3.4
+        uses: oknozor/cocogitto-action@v3.5
         with:
           release: true
       - name: Generate Changelog
