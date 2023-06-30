@@ -18,7 +18,7 @@ tokio = { version = "1.29.0", features = ["full", "tracing"] }
 kube = { version = "0.83.0", default-features = false, features = ["client", "rustls-tls"] }
 k8s-openapi = { version = "0.18.0", features = ["v1_26"] }
 rand = "0.8.5"
-clap = { version = "4.3.8", features = ["derive", "cargo", "env"] }
+clap = { version = "4.3.10", features = ["derive", "cargo", "env"] }
 axum = { version = "0.6.18", features = ["tracing", "http2", ] }
 serde_json = "1.0.99"
 shellwords = "1.1.0"
