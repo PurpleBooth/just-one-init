@@ -20,7 +20,7 @@ k8s-openapi = { version = "0.18.0", features = ["v1_26"] }
 rand = "0.8.5"
 clap = { version = "4.3.8", features = ["derive", "cargo", "env"] }
 axum = { version = "0.6.18", features = ["tracing", "http2", ] }
-serde_json = "1.0.99"
+serde_json = "1.0.104"
 shellwords = "1.1.0"
 tracing-futures = { version = "0.2.5" }
 tower-http = { version = "0.4.1", features = ["tracing", "compression-br", "compression-deflate", "compression-gzip", "compression-zstd"] }
