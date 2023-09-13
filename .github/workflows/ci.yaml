@@ -68,7 +68,7 @@ jobs:
       - name: Lowercase image name
         run: echo "IMAGE_NAME=${IMAGE_NAME,,}" >> "$GITHUB_ENV"
       - name: Set up QEMU
-        uses: docker/setup-qemu-action@v2
+        uses: docker/setup-qemu-action@v3
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v2
       - name: Log into registry ${{ env.REGISTRY }}
@@ -201,7 +201,7 @@ jobs:
       - name: Lowercase image name
         run: echo "IMAGE_NAME=${IMAGE_NAME,,}" >> "$GITHUB_ENV"
       - name: Set up QEMU
-        uses: docker/setup-qemu-action@v2
+        uses: docker/setup-qemu-action@v3
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v2
       - name: Log into registry ${{ env.REGISTRY }}
